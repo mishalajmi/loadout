@@ -1,30 +1,51 @@
-use iced::widget::{column, container, row, text};
+use crate::pages::setup::{SetupPage, SetupPageEvent};
 use iced::window::{Position, Settings};
-use iced::{window, Color, Element, Length, Size, Task, Theme};
+use iced::{window, Element, Size, Task, Theme};
 use serde::{Deserialize, Serialize};
+use std::cell::RefCell;
 use std::fs;
 use std::path::PathBuf;
+
+mod pages {
+    pub mod setup;
+}
 
 #[derive(Debug, Clone)]
 enum Message {
     UpdateWidth(String),
     UpdateHeight(String),
+    PageTransition(String),
+    SetupPageTransition(SetupPageEvent)
 }
-#[derive(Debug, Clone, Copy)]
+
+#[derive(Debug, Clone)]
+enum LoadoutPages {
+    LoadoutSetupPage(SetupPage)
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+struct Games {
+    game_title: String,
+    game_cover_art: String,
+    game_dir_location: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 enum GameLauncher {
     Steam,
     Epic,
     Custom,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 struct Platform {
     launcher: GameLauncher,
     game_directory: PathBuf,
     icon: String,
+    games: Vec<Games>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 struct LoadoutDisplay {
     width: f32,
     height: f32,
@@ -117,7 +138,7 @@ impl LoadoutOptions {
             "CatppuccinMocha" => Theme::CatppuccinMocha,
             "Light" => Theme::CatppuccinFrappe,
             "Dark" => Theme::TokyoNight,
-            _ => Theme::CatppuccinMocha
+            _ => Theme::CatppuccinMocha,
         }
     }
 }
@@ -127,14 +148,19 @@ struct Loadout {
     title: String,
     options: LoadoutOptions,
     platforms: Vec<Platform>,
+    // TODO: create a vec of pages for the whole application
+    pages: Vec<SetupPage>,
 }
 
 impl Default for Loadout {
+    // setup platforms here
+    // call something like platforms.load_from_config(&options.config) for e.g.
     fn default() -> Self {
         Self {
             title: String::from("Loadout"),
             options: LoadoutOptions::load_or_default(),
             platforms: Vec::new(),
+            pages: vec![SetupPage::default()],
         }
     }
 }
@@ -148,41 +174,29 @@ impl Loadout {
         match message {
             Message::UpdateWidth(w) => self.options.display.update_screen_width(&w[..]),
             Message::UpdateHeight(h) => self.options.display.update_screen_height(&h[..]),
+            Message::PageTransition(p) => println!("Transitioning to new page"),
+            Message::SetupPageTransition(event) => self.pages.get(0).unwrap().clone().select_directory("hello".to_string()),
         }
         Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let display = row![
-            column![
-                text("test")
-                    .size(24)
-                    .width(Length::Fill)
-                    .height(Length::Fill)
-                    .color(Color::from_rgba8(255, 100, 50, 1.0))
-            ]
-            .spacing(18),
-            column![
-                text("test")
-                    .size(24)
-                    .width(Length::FillPortion(3))
-                    .height(Length::FillPortion(3)),
-            ]
-        ];
-        container(display).padding(10).into()
+        let current_page = self.pages.get(0);
+
+        current_page.unwrap().view()
     }
 }
 
 fn main() -> iced::Result {
-    let initial_options = LoadoutOptions::load_or_default();
+    let initial_options = RefCell::new(LoadoutOptions::load_or_default());
     iced::application(Loadout::default, Loadout::update, Loadout::view)
-        .theme(initial_options.clone().get_theme())
+        .theme(initial_options.borrow().clone().get_theme())
         .window(Settings {
             size: Size {
-                width: initial_options.clone().display.get_screen_width(),
-                height: initial_options.clone().display.get_screen_height(),
+                width: initial_options.borrow().display.get_screen_width(),
+                height: initial_options.borrow().display.get_screen_height(),
             },
-            position: initial_options.clone().display.get_display_position(),
+            position: initial_options.borrow().display.get_display_position(),
             ..window::Settings::default()
         })
         .run()
