@@ -1,85 +1,79 @@
-use crate::pages::setup::{SetupPage, SetupPageEvent};
-use iced::window::{Position, Settings};
-use iced::{window, Element, Size, Task, Theme};
-use serde::{Deserialize, Serialize};
-use std::cell::RefCell;
-use std::fs;
-use std::path::PathBuf;
-
+mod error;
 mod pages {
     pub mod setup;
 }
 
+use crate::pages::setup::SetupPage;
+use error::{LoadoutError, Result};
+use iced::window::Position;
+use iced::{window, Element, Size, Task, Theme};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::PathBuf;
+
+#[derive(Debug, Clone)]
+enum Page {
+    Library,
+    AddDirectory(SetupPage),
+    Settings,
+}
+
+#[derive(Debug, Clone)]
+pub enum Action {
+    SelectDirectory,
+    Cancel,
+}
+
 #[derive(Debug, Clone)]
 enum Message {
-    UpdateWidth(String),
-    UpdateHeight(String),
-    PageTransition(String),
-    SetupPageTransition(SetupPageEvent)
+    NavigateTo(Page),
+    DirectoryAction(Action),
 }
-
-#[derive(Debug, Clone)]
-enum LoadoutPages {
-    LoadoutSetupPage(SetupPage)
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Games {
-    game_title: String,
-    game_cover_art: String,
-    game_dir_location: PathBuf,
+struct Game {
+    title: String,
+    cover_art: String,
+    directory: PathBuf,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum GameLauncher {
+enum Launcher {
     Steam,
     Epic,
     Custom,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct Platform {
-    launcher: GameLauncher,
-    game_directory: PathBuf,
+struct GameDirectory {
+    launcher: Launcher,
+    path: PathBuf,
     icon: String,
-    games: Vec<Games>,
+    games: Vec<Game>,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct LoadoutDisplay {
+struct DisplaySettings {
     width: f32,
     height: f32,
     centered: bool,
 }
 
-impl Default for LoadoutDisplay {
+impl Default for DisplaySettings {
     fn default() -> Self {
-        LoadoutDisplay {
-            height: 768.,
+        DisplaySettings {
             width: 1160.,
+            height: 768.,
             centered: true,
         }
     }
 }
 
-impl LoadoutDisplay {
-    fn update_screen_width(&mut self, value: &str) {
-        self.width = value.parse::<f32>().unwrap_or(self.width)
+impl DisplaySettings {
+    fn size(&self) -> Size {
+        Size::new(self.width, self.height)
     }
 
-    fn update_screen_height(&mut self, value: &str) {
-        self.height = value.parse::<f32>().unwrap_or(self.height)
-    }
-
-    fn get_screen_width(self) -> f32 {
-        self.width
-    }
-
-    fn get_screen_height(self) -> f32 {
-        self.height
-    }
-
-    fn get_display_position(self) -> Position {
+    fn position(&self) -> Position {
         if self.centered {
             Position::Centered
         } else {
@@ -89,51 +83,61 @@ impl LoadoutDisplay {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-struct LoadoutOptions {
-    display: LoadoutDisplay,
+struct Config {
+    display: DisplaySettings,
     theme: String,
     run_on_startup: bool,
+    directories: Vec<GameDirectory>,
 }
 
-impl Default for LoadoutOptions {
+impl Default for Config {
     fn default() -> Self {
-        LoadoutOptions {
-            display: LoadoutDisplay::default(),
+        Config {
+            display: DisplaySettings::default(),
             theme: "CatppuccinMocha".into(),
             run_on_startup: false,
+            directories: Vec::new(),
         }
     }
 }
 
-impl LoadoutOptions {
-    fn load_or_default() -> Self {
-        Self::load_from_file().unwrap_or_else(|_| Self::default_options())
+impl Config {
+    fn load() -> Self {
+        Self::load_from_file().unwrap_or_default()
     }
 
-    fn load_from_file() -> Result<Self, Box<dyn std::error::Error>> {
-        let config_path = Self::get_config_path()?;
-        let file = std::fs::read_to_string(config_path)?;
-        let options = serde_json::from_str(&file)?;
-        Ok(options)
+    fn load_from_file() -> Result<Self> {
+        let path = Self::config_path()?;
+        let content =
+            std::fs::read_to_string(&path).map_err(|e| LoadoutError::ConfigReadError {
+                path: path.clone(),
+                source: e,
+            })?;
+        let config = serde_json::from_str(&content)?;
+        Ok(config)
     }
 
-    fn get_config_path() -> Result<PathBuf, Box<dyn std::error::Error>> {
-        let mut path = dirs::config_dir().ok_or("Could not find config directory")?;
+    fn save(&self) -> Result<()> {
+        let path = Self::config_path()?;
+        let content = serde_json::to_string_pretty(self)?;
+        fs::write(&path, content).map_err(|e| LoadoutError::ConfigWriteError {
+            path: path.clone(),
+            source: e,
+        })?;
+        Ok(())
+    }
+
+    fn config_path() -> Result<PathBuf> {
+        let mut path = dirs::config_dir().ok_or(LoadoutError::ConfigDirNotFound)?;
         path.push("Loadout");
-        fs::create_dir_all(&path)?;
-        path.push(".loadout");
+        fs::create_dir_all(&path).map_err(|e| LoadoutError::ConfigDirCreateError {
+            path: path.clone(),
+            source: e,
+        })?;
+        path.push("config.json");
         Ok(path)
     }
-
-    fn default_options() -> Self {
-        Self {
-            display: LoadoutDisplay::default(),
-            theme: "CatppuccinMocha".to_string(),
-            run_on_startup: false,
-        }
-    }
-
-    fn get_theme(self) -> Theme {
+    fn theme(&self) -> Theme {
         match self.theme.as_str() {
             "CatppuccinMocha" => Theme::CatppuccinMocha,
             "Light" => Theme::CatppuccinFrappe,
@@ -145,58 +149,98 @@ impl LoadoutOptions {
 
 #[derive(Debug, Clone)]
 struct Loadout {
-    title: String,
-    options: LoadoutOptions,
-    platforms: Vec<Platform>,
-    // TODO: create a vec of pages for the whole application
-    pages: Vec<SetupPage>,
+    config: Config,
+    current_page: Page,
 }
 
 impl Default for Loadout {
-    // setup platforms here
-    // call something like platforms.load_from_config(&options.config) for e.g.
     fn default() -> Self {
+        let options = Config::load();
+        let current_page = if options.directories.is_empty() {
+            Page::AddDirectory(SetupPage::default())
+        } else {
+            Page::Library
+        };
+
         Self {
-            title: String::from("Loadout"),
-            options: LoadoutOptions::load_or_default(),
-            platforms: Vec::new(),
-            pages: vec![SetupPage::default()],
+            config: Config::load(),
+            current_page,
         }
     }
 }
 
 impl Loadout {
-    fn new(self) -> (Self, Task<Message>) {
-        (Loadout::default(), Task::none())
-    }
-
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
-            Message::UpdateWidth(w) => self.options.display.update_screen_width(&w[..]),
-            Message::UpdateHeight(h) => self.options.display.update_screen_height(&h[..]),
-            Message::PageTransition(p) => println!("Transitioning to new page"),
-            Message::SetupPageTransition(event) => self.pages.get(0).unwrap().clone().select_directory("hello".to_string()),
+            Message::NavigateTo(page) => self.current_page = page,
+            Message::DirectoryAction(action) => {
+                if let Page::AddDirectory(ref mut page) = self.current_page {
+                    match action {
+                        Action::SelectDirectory => match page.select_directory() {
+                            Ok(_) => {
+                                if !page.directory_path.as_os_str().is_empty() {
+                                    let new_dir = GameDirectory {
+                                        launcher: Launcher::Custom,
+                                        path: page.directory_path.clone(),
+                                        icon: String::new(),
+                                        games: Vec::new(),
+                                    };
+                                    self.config.directories.push(new_dir);
+                                    if let Err(e) = self.config.save() {
+                                        eprintln!("Failed to save config: {}", e);
+                                    }
+                                    self.current_page = Page::Library
+                                }
+                            }
+                            Err(LoadoutError::NoDirectorySelected) => {
+                                eprintln!("You didn't select a directory")
+                            }
+                            Err(e) => {
+                                eprintln!("Error selecting directory: {}", e);
+                            }
+                        },
+                        Action::Cancel => {
+                            if !self.config.directories.is_empty() {
+                                self.current_page = Page::Library;
+                            }
+                        }
+                    }
+                }
+            }
         }
         Task::none()
     }
 
     fn view(&self) -> Element<'_, Message> {
-        let current_page = self.pages.get(0);
+        use iced::widget::{button, column, text};
 
-        current_page.unwrap().view()
+        match &self.current_page {
+            Page::Library => column![
+                text("Your Game Library").size(24),
+                text(format!(
+                    "{} directories configured",
+                    self.config.directories.len()
+                )),
+                button("Add Directory").on_press(Message::NavigateTo(Page::AddDirectory(
+                    SetupPage::default()
+                ))),
+            ]
+            .padding(20)
+            .spacing(10)
+            .into(),
+            Page::Settings => text("Settings page").into(),
+            Page::AddDirectory(page) => page.view(),
+        }
     }
 }
 
 fn main() -> iced::Result {
-    let initial_options = RefCell::new(LoadoutOptions::load_or_default());
+    let config = Config::load();
     iced::application(Loadout::default, Loadout::update, Loadout::view)
-        .theme(initial_options.borrow().clone().get_theme())
-        .window(Settings {
-            size: Size {
-                width: initial_options.borrow().display.get_screen_width(),
-                height: initial_options.borrow().display.get_screen_height(),
-            },
-            position: initial_options.borrow().display.get_display_position(),
+        .theme(config.theme())
+        .window(window::Settings {
+            size: config.display.size(),
+            position: config.display.position(),
             ..window::Settings::default()
         })
         .run()

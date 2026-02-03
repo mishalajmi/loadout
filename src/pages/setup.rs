@@ -1,60 +1,47 @@
-use crate::Message;
-use iced::alignment::{Horizontal, Vertical};
-use iced::widget::{button, column, container, row, text};
+use crate::{Message, Action};
+use iced::alignment::{Horizontal};
+use iced::widget::{button, column, container, text};
 use iced::{Color, Element, Length};
+use rfd::FileDialog;
 use std::path::PathBuf;
+use crate::error::{LoadoutError, Result};
 
 #[derive(Debug, Clone, Default)]
 pub struct SetupPage {
     pub directory_path: PathBuf,
 }
 
-#[derive(Debug, Clone)]
-pub enum SetupPageEvent {
-    DirectorySelected(String),
-}
-
 impl SetupPage {
-    pub fn new() -> Self {
-        Self {
-            directory_path: PathBuf::default(),
-        }
-    }
-
     pub fn view(&self) -> Element<'_, Message> {
-        let display = row![column![
-            text("Setup your first game library")
+        let content = column![
+            text("Add a game directory")
                 .size(24)
-                .width(Length::Fill)
-                .height(Length::Fill)
-                .color(Color::from_rgba8(255, 255, 255, 1.0))
-                .align_x(Horizontal::Center)
-                .align_y(Vertical::Center),
-            button("Select a directory")
-                .width(Length::Fixed(128.))
-                .height(Length::Fixed(64.))
-                .on_press(SetupPageEvent::DirectorySelected("test".to_string()).into())
-        ]];
-        container(display).padding(10).into()
+                .color(Color::WHITE),  // Use Color::WHITE instead
+            button("Select Directory")
+                .padding(10)
+                .on_press(Message::DirectoryAction(Action::SelectDirectory)),
+            button("Cancel")
+                .padding(10)
+                .on_press(Message::DirectoryAction(Action::Cancel)),
+        ]
+            .spacing(20)
+            .align_x(Horizontal::Center);
+
+        container(content)
+            .padding(20)
+            .center_x(Length::Fill)
+            .center_y(Length::Fill)
+            .into()
     }
 
-    pub fn select_directory(&mut self, dir: String) {
-        let path = PathBuf::from(dir);
-        if !path.exists() || !path.is_dir() {
-            println!(
-                "Provided shit is neither a directory nor does it exist, {:?}",
-                path
-            );
-            return;
-        }
-
-        self.directory_path = path.canonicalize().unwrap();
+    pub fn select_directory(&mut self) -> Result<()>{
+        let path = FileDialog::new()
+            .pick_folder()
+            .ok_or(LoadoutError::NoDirectorySelected)?;
+        self.directory_path = path;
         println!("Using this path for directory: {:?}", self.directory_path);
+        Ok(())
     }
 }
 
-impl From<SetupPageEvent> for Message {
-    fn from(value: SetupPageEvent) -> Self {
-        Self::SetupPageTransition(value)
-    }
-}
+
