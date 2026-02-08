@@ -26,6 +26,11 @@ pub enum LoadoutError {
     NoDirectorySelected,
     #[error("Invalid directory path: {0}")]
     InvalidDirectory(PathBuf),
+    #[error("Could not launch game: {path}: {source}")]
+    GameLaunchError {
+        path: PathBuf,
+        source: std::io::Error,
+    }
 }
 
 pub type Result<T> = anyhow::Result<T, LoadoutError>;

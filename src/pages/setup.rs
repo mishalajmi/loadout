@@ -16,7 +16,7 @@ impl SetupPage {
         let content = column![
             text("Add a game directory")
                 .size(24)
-                .color(Color::WHITE),  // Use Color::WHITE instead
+                .color(Color::WHITE),
             button("Select Directory")
                 .padding(10)
                 .on_press(Message::DirectoryAction(Action::SelectDirectory)),

@@ -1,20 +1,18 @@
+mod config;
 mod error;
-mod pages {
-    pub mod setup;
-}
+mod pages;
 
-use crate::pages::setup::SetupPage;
-use error::{LoadoutError, Result};
-use iced::window::Position;
-use iced::{window, Element, Size, Task, Theme};
-use serde::{Deserialize, Serialize};
-use std::fs;
+use crate::config::{Config, Game, GameDirectory, Launcher};
+use error::LoadoutError;
+use iced::{window, Element, Task};
 use std::path::PathBuf;
+use crate::pages::{LibraryPage, SetupPage};
 
 #[derive(Debug, Clone)]
 enum Page {
-    Library,
+    Library(LibraryPage),
     AddDirectory(SetupPage),
+    GameDetails(String),
     Settings,
 }
 
@@ -28,123 +26,7 @@ pub enum Action {
 enum Message {
     NavigateTo(Page),
     DirectoryAction(Action),
-}
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Game {
-    title: String,
-    cover_art: String,
-    directory: PathBuf,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-enum Launcher {
-    Steam,
-    Epic,
-    Custom,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct GameDirectory {
-    launcher: Launcher,
-    path: PathBuf,
-    icon: String,
-    games: Vec<Game>,
-}
-
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
-struct DisplaySettings {
-    width: f32,
-    height: f32,
-    centered: bool,
-}
-
-impl Default for DisplaySettings {
-    fn default() -> Self {
-        DisplaySettings {
-            width: 1160.,
-            height: 768.,
-            centered: true,
-        }
-    }
-}
-
-impl DisplaySettings {
-    fn size(&self) -> Size {
-        Size::new(self.width, self.height)
-    }
-
-    fn position(&self) -> Position {
-        if self.centered {
-            Position::Centered
-        } else {
-            Position::Default
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct Config {
-    display: DisplaySettings,
-    theme: String,
-    run_on_startup: bool,
-    directories: Vec<GameDirectory>,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Config {
-            display: DisplaySettings::default(),
-            theme: "CatppuccinMocha".into(),
-            run_on_startup: false,
-            directories: Vec::new(),
-        }
-    }
-}
-
-impl Config {
-    fn load() -> Self {
-        Self::load_from_file().unwrap_or_default()
-    }
-
-    fn load_from_file() -> Result<Self> {
-        let path = Self::config_path()?;
-        let content =
-            std::fs::read_to_string(&path).map_err(|e| LoadoutError::ConfigReadError {
-                path: path.clone(),
-                source: e,
-            })?;
-        let config = serde_json::from_str(&content)?;
-        Ok(config)
-    }
-
-    fn save(&self) -> Result<()> {
-        let path = Self::config_path()?;
-        let content = serde_json::to_string_pretty(self)?;
-        fs::write(&path, content).map_err(|e| LoadoutError::ConfigWriteError {
-            path: path.clone(),
-            source: e,
-        })?;
-        Ok(())
-    }
-
-    fn config_path() -> Result<PathBuf> {
-        let mut path = dirs::config_dir().ok_or(LoadoutError::ConfigDirNotFound)?;
-        path.push("Loadout");
-        fs::create_dir_all(&path).map_err(|e| LoadoutError::ConfigDirCreateError {
-            path: path.clone(),
-            source: e,
-        })?;
-        path.push("config.json");
-        Ok(path)
-    }
-    fn theme(&self) -> Theme {
-        match self.theme.as_str() {
-            "CatppuccinMocha" => Theme::CatppuccinMocha,
-            "Light" => Theme::CatppuccinFrappe,
-            "Dark" => Theme::TokyoNight,
-            _ => Theme::CatppuccinMocha,
-        }
-    }
+    LaunchGame(PathBuf),
 }
 
 #[derive(Debug, Clone)]
@@ -155,15 +37,20 @@ struct Loadout {
 
 impl Default for Loadout {
     fn default() -> Self {
-        let options = Config::load();
-        let current_page = if options.directories.is_empty() {
+        let config = Config::load();
+        let current_page = if config.directories.is_empty() {
             Page::AddDirectory(SetupPage::default())
         } else {
-            Page::Library
+            let games: Vec<Game> = config
+                .directories
+                .iter()
+                .flat_map(|dir| dir.games.clone())
+                .collect();
+            Page::Library(LibraryPage::new(games))
         };
 
         Self {
-            config: Config::load(),
+            config,
             current_page,
         }
     }
@@ -189,7 +76,14 @@ impl Loadout {
                                     if let Err(e) = self.config.save() {
                                         eprintln!("Failed to save config: {}", e);
                                     }
-                                    self.current_page = Page::Library
+                                    let games = self
+                                        .config
+                                        .directories
+                                        .iter()
+                                        .flat_map(|dir| dir.games.clone())
+                                        .collect();
+
+                                    self.current_page = Page::Library(LibraryPage::new(games));
                                 }
                             }
                             Err(LoadoutError::NoDirectorySelected) => {
@@ -201,10 +95,21 @@ impl Loadout {
                         },
                         Action::Cancel => {
                             if !self.config.directories.is_empty() {
-                                self.current_page = Page::Library;
+                                let games = self
+                                    .config
+                                    .directories
+                                    .iter()
+                                    .flat_map(|dir| dir.games.clone())
+                                    .collect();
+                                self.current_page = Page::Library(LibraryPage::new(games));
                             }
                         }
                     }
+                }
+            }
+            Message::LaunchGame(game_path) => {
+                if let Err(e) = self.launch_game(&game_path) {
+                    eprintln!("Failed to launch game: {}", e);
                 }
             }
         }
@@ -212,25 +117,38 @@ impl Loadout {
     }
 
     fn view(&self) -> Element<'_, Message> {
-        use iced::widget::{button, column, text};
+        use iced::widget::text;
 
         match &self.current_page {
-            Page::Library => column![
-                text("Your Game Library").size(24),
-                text(format!(
-                    "{} directories configured",
-                    self.config.directories.len()
-                )),
-                button("Add Directory").on_press(Message::NavigateTo(Page::AddDirectory(
-                    SetupPage::default()
-                ))),
-            ]
-            .padding(20)
-            .spacing(10)
-            .into(),
+            Page::Library(library) => library.view(),
             Page::Settings => text("Settings page").into(),
-            Page::AddDirectory(page) => page.view(),
+            Page::AddDirectory(setup) => setup.view(),
+            Page::GameDetails(_games) => text("Game details").into(),
         }
+    }
+
+    fn launch_game(&self, game_path: &PathBuf) -> error::Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            std::process::Command::new("cmd")
+                .args(["/C", game_path.as_os_str().to_str().unwrap()])
+                .spawn()
+                .map_err(|e| LoadoutError::GameLaunchError {
+                    path: game_path.clone(),
+                    source: e,
+                })?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            std::process::Command::new("xdg-open")
+                .arg(game_path)
+                .spawn()
+                .map_err(|e| LoadoutError::GameLaunchError {
+                    path: game_path.clone(),
+                    source: e,
+                })?;
+        }
+        Ok(())
     }
 }
 
