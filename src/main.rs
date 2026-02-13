@@ -1,11 +1,13 @@
 mod config;
 mod error;
 mod pages;
+mod game;
 
-use crate::config::{Config, Game, GameDirectory, Launcher};
+use crate::config::{Config, GameDirectory, Launcher};
 use error::LoadoutError;
 use iced::{window, Element, Task};
 use std::path::PathBuf;
+use crate::game::Game;
 use crate::pages::{LibraryPage, SetupPage};
 
 #[derive(Debug, Clone)]
@@ -26,7 +28,7 @@ pub enum Action {
 enum Message {
     NavigateTo(Page),
     DirectoryAction(Action),
-    LaunchGame(PathBuf),
+    LaunchGame(Game),
 }
 
 #[derive(Debug, Clone)]
@@ -107,8 +109,8 @@ impl Loadout {
                     }
                 }
             }
-            Message::LaunchGame(game_path) => {
-                if let Err(e) = self.launch_game(&game_path) {
+            Message::LaunchGame(game) => {
+                if let Err(e) = game.load() {
                     eprintln!("Failed to launch game: {}", e);
                 }
             }
@@ -125,30 +127,6 @@ impl Loadout {
             Page::AddDirectory(setup) => setup.view(),
             Page::GameDetails(_games) => text("Game details").into(),
         }
-    }
-
-    fn launch_game(&self, game_path: &PathBuf) -> error::Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            std::process::Command::new("cmd")
-                .args(["/C", game_path.as_os_str().to_str().unwrap()])
-                .spawn()
-                .map_err(|e| LoadoutError::GameLaunchError {
-                    path: game_path.clone(),
-                    source: e,
-                })?;
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            std::process::Command::new("xdg-open")
-                .arg(game_path)
-                .spawn()
-                .map_err(|e| LoadoutError::GameLaunchError {
-                    path: game_path.clone(),
-                    source: e,
-                })?;
-        }
-        Ok(())
     }
 }
 

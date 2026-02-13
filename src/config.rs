@@ -3,13 +3,7 @@ use std::path::PathBuf;
 use iced::{window, Size, Theme};
 use serde::{Deserialize, Serialize};
 use crate::error::LoadoutError;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct Game {
-    pub title: String,
-    pub cover_art: String,
-    pub directory: PathBuf,
-}
+use crate::game::Game;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum Launcher {
